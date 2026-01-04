@@ -1,0 +1,417 @@
+// Lake B2B Affiliate Portal Database Schema
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserRole {
+  ADMIN
+  MANAGER
+  AFFILIATE
+}
+
+enum AffiliateStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum AffiliateTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum ConversionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum PayoutMethod {
+  BANK_TRANSFER
+  PAYPAL
+  STRIPE
+  CHECK
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+// Models
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  password      String
+  role          UserRole  @default(AFFILIATE)
+  image         String?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+
+  // Relations
+  affiliate     Affiliate?
+  sessions      Session[]
+  accounts      Account[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Affiliate {
+  id                String          @id @default(cuid())
+  userId            String          @unique
+  affiliateCode     String          @unique
+  tier              AffiliateTier   @default(BRONZE)
+  status            AffiliateStatus @default(PENDING)
+
+  // Commission rates (can override global rates)
+  customCommissionRate Decimal?     @db.Decimal(5, 4)
+
+  // Financial tracking
+  totalEarnings     Decimal         @default(0) @db.Decimal(12, 2)
+  pendingEarnings   Decimal         @default(0) @db.Decimal(12, 2)
+  paidEarnings      Decimal         @default(0) @db.Decimal(12, 2)
+
+  // Payment information
+  paymentMethod     PayoutMethod?
+  paymentEmail      String?
+  bankAccountName   String?
+  bankAccountNumber String?
+  bankRoutingNumber String?
+
+  // Tax information
+  taxId             String?
+  taxFormSubmitted  Boolean         @default(false)
+
+  // Profile
+  company           String?
+  website           String?
+  phone             String?
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+
+  // Metadata
+  referralSource    String?
+  notes             String?         @db.Text
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  approvedAt        DateTime?
+
+  // Relations
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clicks            Click[]
+  conversions       Conversion[]
+  campaigns         Campaign[]
+  payouts           Payout[]
+
+  @@index([affiliateCode])
+  @@index([status])
+  @@index([tier])
+  @@map("affiliates")
+}
+
+model Click {
+  id              String   @id @default(cuid())
+  affiliateId     String
+  campaignId      String?
+
+  // Tracking data
+  ipAddress       String
+  userAgent       String   @db.Text
+  referrer        String?  @db.Text
+  landingPage     String   @db.Text
+
+  // UTM parameters
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmTerm         String?
+  utmContent      String?
+
+  // Geolocation
+  country         String?
+  city            String?
+  region          String?
+
+  // Device info
+  deviceType      String?
+  browser         String?
+  os              String?
+
+  // Conversion tracking
+  converted       Boolean  @default(false)
+  conversionId    String?  @unique
+
+  createdAt       DateTime @default(now())
+
+  // Relations
+  affiliate       Affiliate   @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  campaign        Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  conversion      Conversion? @relation(fields: [conversionId], references: [id])
+
+  @@index([affiliateId])
+  @@index([campaignId])
+  @@index([createdAt])
+  @@index([converted])
+  @@map("clicks")
+}
+
+model Conversion {
+  id                String           @id @default(cuid())
+  clickId           String?          @unique
+  affiliateId       String
+
+  // Order information
+  orderId           String           @unique
+  orderValue        Decimal          @db.Decimal(12, 2)
+
+  // Commission calculation
+  commissionRate    Decimal          @db.Decimal(5, 4)
+  commissionAmount  Decimal          @db.Decimal(12, 2)
+
+  // Status
+  status            ConversionStatus @default(PENDING)
+
+  // Product information
+  productId         String?
+  productName       String?
+  productCategory   String?
+  quantity          Int?
+
+  // Customer information (anonymized)
+  customerId        String?
+  customerEmail     String?
+
+  // Metadata
+  notes             String?          @db.Text
+
+  // Dates
+  conversionDate    DateTime         @default(now())
+  approvedDate      DateTime?
+  rejectedDate      DateTime?
+  paidDate          DateTime?
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relations
+  click             Click?
+  affiliate         Affiliate        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  @@index([affiliateId])
+  @@index([orderId])
+  @@index([status])
+  @@index([conversionDate])
+  @@map("conversions")
+}
+
+model Campaign {
+  id              String         @id @default(cuid())
+  affiliateId     String
+
+  name            String
+  description     String?        @db.Text
+  trackingCode    String         @unique
+
+  status          CampaignStatus @default(DRAFT)
+
+  // Date range
+  startDate       DateTime?
+  endDate         DateTime?
+
+  // Performance metrics (cached for quick access)
+  totalClicks     Int            @default(0)
+  totalConversions Int           @default(0)
+  totalRevenue    Decimal        @default(0) @db.Decimal(12, 2)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  affiliate       Affiliate      @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  clicks          Click[]
+
+  @@index([affiliateId])
+  @@index([trackingCode])
+  @@index([status])
+  @@map("campaigns")
+}
+
+model Payout {
+  id              String        @id @default(cuid())
+  affiliateId     String
+
+  amount          Decimal       @db.Decimal(12, 2)
+  status          PayoutStatus  @default(PENDING)
+  method          PayoutMethod
+
+  // Transaction details
+  transactionId   String?       @unique
+  transactionFee  Decimal?      @db.Decimal(12, 2)
+  netAmount       Decimal?      @db.Decimal(12, 2)
+
+  // Metadata
+  notes           String?       @db.Text
+  failureReason   String?       @db.Text
+
+  // Dates
+  requestedDate   DateTime      @default(now())
+  processedDate   DateTime?
+  paidDate        DateTime?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  affiliate       Affiliate     @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  @@index([affiliateId])
+  @@index([status])
+  @@index([requestedDate])
+  @@map("payouts")
+}
+
+model CommissionRule {
+  id              String    @id @default(cuid())
+
+  name            String
+  description     String?   @db.Text
+
+  // Tier-based rules
+  tier            AffiliateTier?
+
+  // Product-based rules
+  productCategory String?
+  productId       String?
+
+  // Commission configuration
+  commissionRate  Decimal   @db.Decimal(5, 4)
+
+  // Bonus configuration
+  bonusThreshold  Decimal?  @db.Decimal(12, 2)
+  bonusRate       Decimal?  @db.Decimal(5, 4)
+
+  // Validity period
+  validFrom       DateTime?
+  validUntil      DateTime?
+
+  // Status
+  isActive        Boolean   @default(true)
+  priority        Int       @default(0)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tier])
+  @@index([productCategory])
+  @@index([isActive])
+  @@map("commission_rules")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+
+  // Changes
+  oldValues   String?  @db.Text
+  newValues   String?  @db.Text
+
+  // Metadata
+  ipAddress   String?
+  userAgent   String?  @db.Text
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?  @db.Text
+
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
